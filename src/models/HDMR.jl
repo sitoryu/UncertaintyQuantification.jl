@@ -1,89 +1,164 @@
-# High level Model Representation
+# High Dimensional Model Representation - Generic Implementation
 
 struct HDMRRepresentation
     anchor::Vector{Float64}
     f0::Float64
-    f1::Vector{Function}
-    f2::Dict{Tuple{Int,Int},Function}
+    coefficients::Dict{Vector{Int}, Vector{Float64}}
+    degree::Int
     inputs::Vector{RandomVariable}
     output::Symbol
+    max_order::Int
 end
 
 function (hdmr::HDMRRepresentation)(h::Vector{Float64})
-    val = hdmr.f0
-    d = length(hdmr.anchor)
-    for i in 1:d
-        val += hdmr.f1[i](h[i])
+    result = hdmr.f0
+    
+    for (indices, coeffs) in hdmr.coefficients
+        args = [h[idx] for idx in indices]
+        result += _evaluate_polynomial_from_coeffs(coeffs, args, hdmr.degree)
     end
-    if !isempty(hdmr.f2)
-        for ((i, j), g) in hdmr.f2
-            val += g(h[i], h[j])
-        end
-    end
-    return val
+    
+    return result
 end
 
 function cut_HDMR(model::Model, inputs::Vector{RandomVariable}, output::Symbol, anchor::DataFrame; order::Int=2, degree::Int=3, samples::Int=50)
     varnames = names(anchor)
     d = length(varnames)
-
     anchor_vec = [anchor[1, name] for name in varnames]
-    
-    # f0 at anchor
     anchor_copy = deepcopy(anchor)
+
     evaluate!(model, anchor_copy)
     f0 = anchor_copy[1, output]
+    
+    xs = range(0.01, 0.99; length=samples)
+    
+    all_points = [
+        begin
+            eval_point = copy(anchor_vec)
+            for (i, var_idx) in enumerate(indices)
+                eval_point[var_idx] = point_values[i]
+            end
+            eval_point
+        end
+        for current_order in 1:order
+        for indices in _combinations(1:d, current_order)
+        for point_values in Iterators.product([xs for _ in 1:current_order]...)
+    ]
+    
+    unique_points_vec = unique(all_points)
+    
+    eval_df = DataFrame(
+        [varname => [point[i] for point in unique_points_vec] for (i, varname) in enumerate(varnames)]
+    )
+    
+    to_standard_normal_space!(inputs, eval_df)
+    to_physical_space!(inputs, eval_df)
+    evaluate!(model, eval_df)
+    
+    all_evaluation_points = Dict{Vector{Float64}, Float64}()
+    for (i, point) in enumerate(unique_points_vec)
+        all_evaluation_points[point] = eval_df[i, output]
+    end
+    
+    hdmr_coefficients = Dict{Vector{Int}, Vector{Float64}}()
+    
+    for current_order in 1:order
+        combinations = _combinations(1:d, current_order)
+        
+        for indices in combinations
+            sample_points = Vector{Vector{Float64}}()
+            
+            for point_values in Iterators.product([xs for _ in 1:current_order]...)
+                push!(sample_points, collect(point_values))
+            end
+            
+            y_values = zeros(length(sample_points))
+            
+            for (k, point_values) in enumerate(sample_points)
+                eval_point = copy(anchor_vec)
+                for (i, var_idx) in enumerate(indices)
+                    eval_point[var_idx] = point_values[i]
+                end
+                
+                model_value = all_evaluation_points[eval_point]
+                
+                lower_contribution = _compute_lower_order_contribution(hdmr_coefficients, indices, point_values, f0, degree)
+                y_values[k] = model_value - lower_contribution
+            end
+            
+            X = _build_polynomial_basis(sample_points, degree, current_order)
+            coefficients = X \ y_values
+            
+            hdmr_coefficients[indices] = coefficients
+        end
+    end
+    
+    return HDMRRepresentation(anchor_vec, f0, hdmr_coefficients, degree, inputs, output, order)
+end
 
-    # First Order
-    f1 = Vector{Any}(undef, d)
-    xs = range(0.0, 1.0; length=samples)
-    for i in 1:d
-        X = zeros(samples, degree+1)
-        y = zeros(samples)
-        for (k, xi) in enumerate(xs)
-            h = deepcopy(anchor)
-            h[!, varnames[i]] .= xi
-            evaluate!(model, h)
-            y[k] = h[1, output] - f0
-            for p in 0:degree
-                X[k, p+1] = xi^p
+function _compute_lower_order_contribution(components_dict::Dict{Vector{Int}, Vector{Float64}}, 
+                                         indices::Vector{Int}, 
+                                         base_value::Float64,
+                                         args::Vector{Float64},
+                                         degree::Int)
+    contribution = base_value
+    
+    for subset_size in 1:length(indices)-1
+        for subset in _combinations(1:length(indices), subset_size)
+            actual_indices = sort([indices[i] for i in subset])
+            
+            if haskey(components_dict, actual_indices)
+                subset_args = [args[i] for i in subset]
+                contribution += _evaluate_polynomial_from_coeffs(components_dict[actual_indices], subset_args, degree)
             end
         end
-        β = X \ y
-        f1[i] = (xi -> sum(β[p+1]*xi^p for p=0:degree))
     end
+    
+    return contribution
+end
 
-    # Second order
-    f2 = Dict{Tuple{Int,Int}, Any}()
-    if order >= 2
-        for i in 1:d-1, j in i+1:d
-            pts = [(xi, xj) for xi in xs, xj in xs]
-            X = zeros(length(pts), (degree+1)^2)
-            y = zeros(length(pts))
-            for (k, (xi, xj)) in enumerate(pts)
-                h = deepcopy(anchor)
-                h[!, varnames[i]] .= xi
-                h[!, varnames[j]] .= xj
-                evaluate!(model, h)
-                y[k] = h[1, output] - f1[i](xi) - f1[j](xj) - f0
-                col = 1
-                for pi in 0:degree, pj in 0:degree
-                    X[k, col] = xi^pi * xj^pj
-                    col += 1
-                end
+function _evaluate_polynomial_from_coeffs(coeffs::Vector{Float64}, args::Vector{Float64}, degree::Int)
+    num_vars = length(args)
+    result = 0.0
+    coeff_idx = 1
+    
+    for powers in Iterators.product([0:degree for _ in 1:num_vars]...)
+        term_value = coeffs[coeff_idx]
+        for (var_idx, power) in enumerate(powers)
+            term_value *= args[var_idx]^power
+        end
+        result += term_value
+        coeff_idx += 1
+    end
+    
+    return result
+end
+
+function _build_polynomial_basis(sample_points::Vector{Vector{Float64}}, degree::Int, num_vars::Int)
+    n_samples = length(sample_points)
+    n_coeffs = (degree + 1)^num_vars
+    X = zeros(n_samples, n_coeffs)
+    
+    for (sample_idx, point) in enumerate(sample_points)
+        coeff_idx = 1
+        
+        for powers in Iterators.product([0:degree for _ in 1:num_vars]...)
+            term_value = 1.0
+            for (var_idx, power) in enumerate(powers)
+                term_value *= point[var_idx]^power
             end
-            β = X \ y
-            f2[(i, j)] = ((xi, xj) -> begin
-                col = 1
-                s = 0.0
-                for pi in 0:degree, pj in 0:degree
-                    s += β[col]*xi^pi*xj^pj
-                    col += 1
-                end
-                return s
-            end)
+            X[sample_idx, coeff_idx] = term_value
+            coeff_idx += 1
         end
     end
+    
+    return X
+end
 
-    return HDMRRepresentation(anchor_vec, f0, f1, f2, inputs, output)
+function _combinations(arr, k)
+    n = length(arr)
+    k < 0 || k > n ? Vector{Vector{eltype(arr)}}() :
+    k == 0 ? [eltype(arr)[]] :
+    k == n ? [collect(arr)] :
+    reduce(vcat, [[arr[i]; combo] for combo in _combinations(arr[i+1:end], k-1)] for i in 1:n-k+1)
 end
