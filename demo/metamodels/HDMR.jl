@@ -1,4 +1,4 @@
-# cutHDMR example/test
+# Test Generic HDMR Implementation
 
 using Pkg
 Pkg.activate(".")
@@ -6,31 +6,43 @@ using UncertaintyQuantification
 using DataFrames
 using Distributions
 
-f(df) = df.x1.^2 .+ 2 .* df.x2 .+ 1
+f(df) = df.x1 .+ df.x2 .+ df.x3 .+ df.x1 .* df.x2 .+ 0.5 .* df.x1 .* df.x2 .* df.x3
 
-inputs = [RandomVariable(Uniform(0,1), :x1), RandomVariable(Uniform(0,1), :x2)]
+inputs = [
+    RandomVariable(Normal(0,2), :x1), 
+    RandomVariable(Uniform(0,2), :x2),
+    RandomVariable(Uniform(0,2), :x3)
+]
 model = Model(f, :y)
-anchor = DataFrame(x1=[0.5], x2=[0.5])
+anchor = DataFrame(x1=[0.5], x2=[0.5], x3=[0.5])
 
-hdmr = cut_HDMR(model, inputs, :y, anchor; order=2, degree=2, samples=20)
 
-println("HDMR at [0.2, 0.8]: ", hdmr([0.2, 0.8]))
-println("True value at [0.2, 0.8]: ", 0.2^2 + 2*0.8 + 1)
-
-println("HDMR at [1.0, 0.0]: ", hdmr([1.0, 0.0]))
-println("True value at [1.0, 0.0]: ", 1.0^2 + 2*0.0 + 1)
-
-println("HDMR at [0.0, 1.0]: ", hdmr([0.0, 1.0]))
-println("True value at [0.0, 1.0]: ", 0.0^2 + 2*1.0 + 1)
-
-errors = Float64[]
-for x1 in [0.1, 0.3, 0.7, 0.9], x2 in [0.1, 0.3, 0.7, 0.9]
-    hdmr_val = hdmr([x1, x2])
-    true_val = x1^2 + 2*x2 + 1
-    error = abs(hdmr_val - true_val)
-    push!(errors, error)
-    println("Point [$x1, $x2]: HDMR = $hdmr_val, True = $true_val, Error = $error")
+for test_order in [1, 2, 3]
+    println("\n=== Testing Order $test_order ===")
+    
+    try
+        hdmr = cut_HDMR(model, inputs, :y, anchor; order=test_order, degree=3, samples=10)
+        
+        test_points = [
+            [0.2, 0.3, 0.4],
+            [0.8, 0.1, 0.9],
+            [0.0, 1.0, 0.5]
+        ]
+        
+        for point in test_points
+            x1, x2, x3 = point
+            hdmr_val = hdmr(point)
+            true_val = x1 + x2 + x3 + x1*x2 + 0.5*x1*x2*x3
+            error = abs(hdmr_val - true_val)
+            
+            println("Point $point:")
+            println("  HDMR: $hdmr_val")
+            println("  True: $true_val") 
+            println("  Error: $error")
+        end
+        
+    catch e
+        println("Error at order $test_order: $e")
+        rethrow(e)
+    end
 end
-
-println("\nMax error: ", maximum(errors))
-println("Mean error: ", sum(errors) / length(errors))
