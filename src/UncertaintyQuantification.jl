@@ -156,6 +156,8 @@ export evaluate
 export evaluate!
 export gradient
 export gradient_in_standard_normal_space
+export gemcs_rs_hdmr
+export lemcs_cut_hdmr
 export mean
 export multivariate_indices
 export periodogram
@@ -202,6 +204,7 @@ include("hpc/slurm.jl")
 
 include("models/pce/pcebases.jl")
 include("models/pce/polynomialchaosexpansion.jl")
+include("models/hdmr.jl")
 
 include("modelupdating/bayesianMAP.jl")
 include("modelupdating/bayesianupdating.jl")
@@ -219,6 +222,7 @@ include("reliability/form.jl")
 include("simulations/importancesampling.jl")
 include("reliability/probabilityoffailure.jl")
 include("reliability/probabilityoffailure_imprecise.jl")
+include("reliability/niss.jl")
 include("sensitivity/sobolindices.jl")
 
 include("util/fourier-transform.jl")
