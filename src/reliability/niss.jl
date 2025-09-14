@@ -58,12 +58,12 @@ function (niss::NISS)(θ::Dict{Symbol, Vector{Float64}})
         combinations = _combinations(1:total_params, current_order)
         
         for indices in combinations
-            estimate, variance = _compute_combination_component(
+            estimate, _, second_moment, _ = _compute_combination_component(
                 sample_matrix, y_values, niss.inputs, indices, niss.anchor, θ
             )
             
             hdmr_components[indices] = estimate
-            hdmr_variances[indices] = variance
+            hdmr_variances[indices] = second_moment
         end
     end
     
@@ -134,17 +134,18 @@ function _compute_combination_component(
     anchorpoint::Dict{Symbol, Vector{Float64}}, # local - single anchor point
     θ::Dict{Symbol, Vector{Float64}}
 )
-    N = size(sample_matrix, 1)
-    current_order = length(combination_indices)
-    
-    weighted_values = map(k -> y_values[k] * _compute_importance_ratio(
-        sample_matrix[k, :], combination_indices, anchorpoint, θ, inputs, current_order
-    ), 1:N)
+    N, order = size(sample_matrix,1), length(combination_indices)
+    res = map(1:N) do k
+        r = _compute_importance_ratio(sample_matrix[k,:], combination_indices, anchorpoint, θ, inputs, order)
+        y = y_values[k]; wy = y*r; wy2 = y^2*r
+        (wy, wy^2, wy2, wy2^2)
+    end |> x -> reduce((a,b)->a.+b, x)
 
-    mean_val = mean(weighted_values)
-    variance = sum(weighted_values.^2 .- N * mean_val^2) / (N * (N - 1))
-    
-    return mean_val, variance
+    μ, μ2 = res[1]/N, res[3]/N
+    σ²    = (res[2]-N*μ^2)/(N*(N-1))
+    σ²₂   = (res[4]-N*μ2^2)/(N*(N-1))
+
+    return μ, σ², μ2, σ²₂
 end
 
 function _compute_combination_component(
@@ -257,10 +258,10 @@ function _compute_sensitivity_indices(lemcs::LEMCSCutHDMR; Nt::Int=50)
 
     function get_component_function(indices::Vector{Int})
         return function(θ_dict::Dict{Symbol, Vector{Float64}})
-            estimate, variance = _compute_combination_component(
+            estimate, _, second_moment, _ = _compute_combination_component(
                 sample_matrix, y_values, lemcs.inputs, indices, lemcs.anchor, θ_dict
             )
-            return estimate, variance
+            return estimate, second_moment
         end
     end
 
