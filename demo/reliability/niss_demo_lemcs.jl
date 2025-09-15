@@ -19,7 +19,6 @@ function g_function(df::DataFrame)
         x1, x2 = df[i, :x1], df[i, :x2]
         outputs[i] = 1.0 - (x1 - 1.0)^2 / 9.0 - (x2 - 1.0)^3 / 16.0
     end
-    
     return outputs
 end
 
@@ -53,16 +52,14 @@ lemcs_result = lemcs_cut_hdmr(
     order=2,
     N=5000
 )
-# println("\nRunning GEMCS-cut-HDMR analysis...")
-# gemcs_result = gemcs_rs_hdmr(
-#     model,
-#     inputs,
-#     :output;
-#     order=2,
-#     N=2000
-# )
-
-
+println("\nRunning GEMCS-cut-HDMR analysis...")
+gemcs_result = gemcs_rs_hdmr(
+    model,
+    inputs,
+    :output;
+    order=2,
+    N=3000
+)
 
 # E_1, hdmr_variances= lemcs_result(Dict(:x1 => [0.2, 1.0], :x2 => [0.0, 1.0]))
 # E_1, hdmr_variances= gemcs_result(Dict(:x1 => [0.2, 1.0], :x2 => [0.0, 1.0]))
@@ -71,102 +68,178 @@ println("\nCreating Plots...")
 
 # LEMCS PLOTS
 mu_range = range(-0.2, 0.2, length=50)
-E1_mu_x1 = zeros(length(mu_range))
-E1_mu_x2 = zeros(length(mu_range))
-V1_mu_x1 = zeros(length(mu_range))
-V1_mu_x2 = zeros(length(mu_range))
-
+E1_mu_x1 = zeros(length(mu_range)); E1_mu_x2 = zeros(length(mu_range))
+V1_mu_x1 = zeros(length(mu_range)); V1_mu_x2 = zeros(length(mu_range))
+E1_mu_x1_var = zeros(length(mu_range)); E1_mu_x2_var = zeros(length(mu_range))
+V1_mu_x1_var = zeros(length(mu_range)); V1_mu_x2_var = zeros(length(mu_range))
 for (i, mu) in enumerate(mu_range)
     θ = Dict(:x1 => [mu, 1.0], :x2 => [mu, 1.0])
-    E_1, V_1 = lemcs_result(θ)
-    E1_mu_x1[i] = get(E_1, [1], NaN)
-    V1_mu_x1[i] = get(V_1, [1], NaN)
-    E1_mu_x2[i] = get(E_1, [3], NaN)
-    V1_mu_x2[i] = get(V_1, [3], NaN)
+    E_i, E_i_var, V_i, V_i_var = lemcs_result(θ; detailed=true)
+    E1_mu_x1[i] = get(E_i, [1], NaN)
+    E1_mu_x1_var[i] = get(E_i_var, [1], NaN)
+    V1_mu_x1[i] = get(V_i, [1], NaN)
+    V1_mu_x1_var[i] = get(V_i_var, [1], NaN)
+    E1_mu_x2[i] = get(E_i, [3], NaN)
+    E1_mu_x2_var[i] = get(E_i_var, [3], NaN)
+    V1_mu_x2[i] = get(V_i, [3], NaN)
+    V1_mu_x2_var[i] = get(V_i_var, [3], NaN)
 end
 
 sigma_range = range(0.8, 1.2, length=50)
-E1_sigma_x1 = zeros(length(sigma_range))
-E1_sigma_x2 = zeros(length(sigma_range))
-V1_sigma_x1 = zeros(length(sigma_range))
-V1_sigma_x2 = zeros(length(sigma_range))
-
+E1_sigma_x1 = zeros(length(sigma_range)); E1_sigma_x2 = zeros(length(sigma_range))
+V1_sigma_x1 = zeros(length(sigma_range)); V1_sigma_x2 = zeros(length(sigma_range))
+E1_sigma_x1_var = zeros(length(sigma_range)); E1_sigma_x2_var = zeros(length(sigma_range))
+V1_sigma_x1_var = zeros(length(sigma_range)); V1_sigma_x2_var = zeros(length(sigma_range))
 for (i, sigma) in enumerate(sigma_range)
     θ = Dict(:x1 => [0.0, sigma], :x2 => [0.0, sigma])
-    E_1, V_1 = lemcs_result(θ)
-    E1_sigma_x1[i] = get(E_1, [2], NaN)
-    V1_sigma_x1[i] = get(V_1, [2], NaN)
-    E1_sigma_x2[i] = get(E_1, [4], NaN)
-    V1_sigma_x2[i] = get(V_1, [4], NaN)
+    E_i, E_i_var, V_i, V_i_var = lemcs_result(θ; detailed=true)
+    E1_sigma_x1[i] = get(E_i, [2], NaN)
+    E1_sigma_x1_var[i] = get(E_i_var, [2], NaN)
+    V1_sigma_x1[i] = get(V_i, [2], NaN)
+    V1_sigma_x1_var[i] = get(V_i_var, [2], NaN)
+    E1_sigma_x2[i] = get(E_i, [4], NaN)
+    E1_sigma_x2_var[i] = get(E_i_var, [4], NaN)
+    V1_sigma_x2[i] = get(V_i, [4], NaN)
+    V1_sigma_x2_var[i] = get(V_i_var, [4], NaN)
 end
 
-lp1 = plot(mu_range, E1_mu_x1, xlabel="μ₁", ylabel="E₁[1]", title="x1 μ component", legend=:topright, ylims=(-0.15, 0.15))
-plot!(lp1, mu_range, V1_mu_x1, label="Var[1]", linestyle=:dash, color=:red)
-plot!(lp1, label="Mean[1]", color=:blue)
+α = 0.05
+z = quantile(Normal(), 1 - α/2)  # ≈ 1.96 for 95% CI
 
-lp2 = plot(mu_range, E1_mu_x2, xlabel="μ₂", ylabel="E₁[3]", title="x2 μ component", legend=:topright, ylims=(-0.15, 0.15))
-plot!(lp2, mu_range, V1_mu_x2, label="Var[3]", linestyle=:dash, color=:red)
-plot!(lp2, label="Mean[3]", color=:blue)
+# --- Mean plots with CI ---
+ci1_lower = E1_mu_x1 .- z .* sqrt.(max.(E1_mu_x1_var, 0.0))
+ci1_upper = E1_mu_x1 .+ z .* sqrt.(max.(E1_mu_x1_var, 0.0))
+lp1 = plot(mu_range, E1_mu_x1, ribbon=(E1_mu_x1 - ci1_lower, ci1_upper - E1_mu_x1),
+    xlabel="μ₁", ylabel="E_cut_1", title="x1 μ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_cut_1 ± 95% CI")
 
-lp3 = plot(sigma_range, E1_sigma_x1, xlabel="σ₁", ylabel="E₁[2]", title="x1 σ component", legend=:topright, ylims=(-0.15, 0.15))
-plot!(lp3, sigma_range, V1_sigma_x1, label="Var[2]", linestyle=:dash, color=:red)
-plot!(lp3, label="Mean[2]", color=:blue)
+ci2_lower = E1_mu_x2 .- z .* sqrt.(max.(E1_mu_x2_var, 0.0))
+ci2_upper = E1_mu_x2 .+ z .* sqrt.(max.(E1_mu_x2_var, 0.0))
+lp2 = plot(mu_range, E1_mu_x2, ribbon=(E1_mu_x2 - ci2_lower, ci2_upper - E1_mu_x2),
+    xlabel="μ₂", ylabel="E_cut_3", title="x2 μ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_cut_3 ± 95% CI")
 
-lp4 = plot(sigma_range, E1_sigma_x2, xlabel="σ₂", ylabel="E₁[4]", title="x2 σ component", legend=:topright, ylims=(-0.15, 0.15))
-plot!(lp4, sigma_range, V1_sigma_x2, label="Var[4]", linestyle=:dash, color=:red)
-plot!(lp4, label="Mean[4]", color=:blue)
+ci3_lower = E1_sigma_x1 .- z .* sqrt.(max.(E1_sigma_x1_var, 0.0))
+ci3_upper = E1_sigma_x1 .+ z .* sqrt.(max.(E1_sigma_x1_var, 0.0))
+lp3 = plot(sigma_range, E1_sigma_x1, ribbon=(E1_sigma_x1 - ci3_lower, ci3_upper - E1_sigma_x1),
+    xlabel="σ₁", ylabel="E_cut_2", title="x1 σ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_cut_2 ± 95% CI")
 
-lemcs_plot = plot(lp1, lp2, lp3, lp4, layout=(2,2), size=(900,700), title="Single HDMR Comp (LEMCS)")
+ci4_lower = E1_sigma_x2 .- z .* sqrt.(max.(E1_sigma_x2_var, 0.0))
+ci4_upper = E1_sigma_x2 .+ z .* sqrt.(max.(E1_sigma_x2_var, 0.0))
+lp4 = plot(sigma_range, E1_sigma_x2, ribbon=(E1_sigma_x2 - ci4_lower, ci4_upper - E1_sigma_x2),
+    xlabel="σ₂", ylabel="E_cut_4", title="x2 σ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_cut_4 ± 95% CI")
 
+lemcs_mean_plot = plot(lp1, lp2, lp3, lp4, layout=(2,2), size=(900,700), title="LEMCS Mean with 95% CI")
 
-# # GEMCS PLOTS
-# mu_range = range(-0.2, 0.2, length=50)
-# E1_mu_x1 = zeros(length(mu_range))
-# E1_mu_x2 = zeros(length(mu_range))
-# V1_mu_x1 = zeros(length(mu_range))
-# V1_mu_x2 = zeros(length(mu_range))
+# --- Second moment plots with CI ---
+ci1_lower2 = V1_mu_x1 .- z .* sqrt.(max.(V1_mu_x1_var, 0.0))
+ci1_upper2 = V1_mu_x1 .+ z .* sqrt.(max.(V1_mu_x1_var, 0.0))
+lp1_2 = plot(mu_range, V1_mu_x1, ribbon=(V1_mu_x1 - ci1_lower2, ci1_upper2 - V1_mu_x1),
+    xlabel="μ₁", ylabel="V_cut_1", title="x1 μ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_cut_1 ± 95% CI")
 
-# for (i, mu) in enumerate(mu_range)
-#     θ = Dict(:x1 => [mu, 1.0], :x2 => [mu, 1.0])
-#     E_1, V_1 = gemcs_result(θ)
-#     E1_mu_x1[i] = get(E_1, [1], NaN)
-#     V1_mu_x1[i] = get(V_1, [1], NaN)
-#     E1_mu_x2[i] = get(E_1, [3], NaN)
-#     V1_mu_x2[i] = get(V_1, [3], NaN)
-# end
+ci2_lower2 = V1_mu_x2 .- z .* sqrt.(max.(V1_mu_x2_var, 0.0))
+ci2_upper2 = V1_mu_x2 .+ z .* sqrt.(max.(V1_mu_x2_var, 0.0))
+lp2_2 = plot(mu_range, V1_mu_x2, ribbon=(V1_mu_x2 - ci2_lower2, ci2_upper2 - V1_mu_x2),
+    xlabel="μ₂", ylabel="V_cut_3", title="x2 μ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_cut_3 ± 95% CI")
 
-# sigma_range = range(0.8, 1.2, length=50)
-# E1_sigma_x1 = zeros(length(sigma_range))
-# E1_sigma_x2 = zeros(length(sigma_range))
-# V1_sigma_x1 = zeros(length(sigma_range))
-# V1_sigma_x2 = zeros(length(sigma_range))
+ci3_lower2 = V1_sigma_x1 .- z .* sqrt.(max.(V1_sigma_x1_var, 0.0))
+ci3_upper2 = V1_sigma_x1 .+ z .* sqrt.(max.(V1_sigma_x1_var, 0.0))
+lp3_2 = plot(sigma_range, V1_sigma_x1, ribbon=(V1_sigma_x1 - ci3_lower2, ci3_upper2 - V1_sigma_x1),
+    xlabel="σ₁", ylabel="V_cut_2", title="x1 σ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_cut_2 ± 95% CI")
 
-# for (i, sigma) in enumerate(sigma_range)
-#     θ = Dict(:x1 => [0.0, sigma], :x2 => [0.0, sigma])
-#     E_1, V_1 = gemcs_result(θ)
-#     E1_sigma_x1[i] = get(E_1, [2], NaN)
-#     V1_sigma_x1[i] = get(V_1, [2], NaN)
-#     E1_sigma_x2[i] = get(E_1, [4], NaN)
-#     V1_sigma_x2[i] = get(V_1, [4], NaN)
-# end
+ci4_lower2 = V1_sigma_x2 .- z .* sqrt.(max.(V1_sigma_x2_var, 0.0))
+ci4_upper2 = V1_sigma_x2 .+ z .* sqrt.(max.(V1_sigma_x2_var, 0.0))
+lp4_2 = plot(sigma_range, V1_sigma_x2, ribbon=(V1_sigma_x2 - ci4_lower2, ci4_upper2 - V1_sigma_x2),
+    xlabel="σ₂", ylabel="V_cut_4", title="x2 σ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_cut_4 ± 95% CI")
 
-# p1 = plot(mu_range, E1_mu_x1, xlabel="μ₁", ylabel="E₁[1]", title="x1 μ component", legend=:topright, ylims=(-0.15, 0.15))
-# plot!(p1, mu_range, V1_mu_x1, label="Var[1]", linestyle=:dash, color=:red)
-# plot!(p1, label="Mean[1]", color=:blue)
+lemcs_secondmoment_plot = plot(lp1_2, lp2_2, lp3_2, lp4_2, layout=(2,2), size=(900,700), title="LEMCS Second Moment with 95% CI")
 
-# p2 = plot(mu_range, E1_mu_x2, xlabel="μ₂", ylabel="E₁[3]", title="x2 μ component", legend=:topright, ylims=(-0.15, 0.15))
-# plot!(p2, mu_range, V1_mu_x2, label="Var[3]", linestyle=:dash, color=:red)
-# plot!(p2, label="Mean[3]", color=:blue)
+display(lemcs_mean_plot)
+display(lemcs_secondmoment_plot)
 
-# p3 = plot(sigma_range, E1_sigma_x1, xlabel="σ₁", ylabel="E₁[2]", title="x1 σ component", legend=:topright, ylims=(-0.15, 0.15))
-# plot!(p3, sigma_range, V1_sigma_x1, label="Var[2]", linestyle=:dash, color=:red)
-# plot!(p3, label="Mean[2]", color=:blue)
+# GEMCS PLOTS
+mu_range = range(-0.2, 0.2, length=50)
+E1_mu_x1 = zeros(length(mu_range)); E1_mu_x2 = zeros(length(mu_range))
+V1_mu_x1 = zeros(length(mu_range)); V1_mu_x2 = zeros(length(mu_range))
+E1_mu_x1_var = zeros(length(mu_range)); E1_mu_x2_var = zeros(length(mu_range))
+V1_mu_x1_var = zeros(length(mu_range)); V1_mu_x2_var = zeros(length(mu_range))
+for (i, mu) in enumerate(mu_range)
+    θ = Dict(:x1 => [mu, 1.0], :x2 => [mu, 1.0])
+    E_i, E_i_var, V_i, V_i_var = gemcs_result(θ; detailed=true)
+    E1_mu_x1[i] = get(E_i, [1], NaN)
+    E1_mu_x1_var[i] = get(E_i_var, [1], NaN)
+    V1_mu_x1[i] = get(V_i, [1], NaN)
+    V1_mu_x1_var[i] = get(V_i_var, [1], NaN)
+    E1_mu_x2[i] = get(E_i, [3], NaN)
+    E1_mu_x2_var[i] = get(E_i_var, [3], NaN)
+    V1_mu_x2[i] = get(V_i, [3], NaN)
+    V1_mu_x2_var[i] = get(V_i_var, [3], NaN)
+end
 
-# p4 = plot(sigma_range, E1_sigma_x2, xlabel="σ₂", ylabel="E₁[4]", title="x2 σ component", legend=:topright, ylims=(-0.15, 0.15))
-# plot!(p4, sigma_range, V1_sigma_x2, label="Var[4]", linestyle=:dash, color=:red)
-# plot!(p4, label="Mean[4]", color=:blue)
+sigma_range = range(0.8, 1.2, length=50)
+E1_sigma_x1 = zeros(length(sigma_range)); E1_sigma_x2 = zeros(length(sigma_range))
+V1_sigma_x1 = zeros(length(sigma_range)); V1_sigma_x2 = zeros(length(sigma_range))
+E1_sigma_x1_var = zeros(length(sigma_range)); E1_sigma_x2_var = zeros(length(sigma_range))
+V1_sigma_x1_var = zeros(length(sigma_range)); V1_sigma_x2_var = zeros(length(sigma_range))
+for (i, sigma) in enumerate(sigma_range)
+    θ = Dict(:x1 => [0.0, sigma], :x2 => [0.0, sigma])
+    E_i, E_i_var, V_i, V_i_var = gemcs_result(θ; detailed=true)
+    E1_sigma_x1[i] = get(E_i, [2], NaN)
+    E1_sigma_x1_var[i] = get(E_i_var, [2], NaN)
+    V1_sigma_x1[i] = get(V_i, [2], NaN)
+    V1_sigma_x1_var[i] = get(V_i_var, [2], NaN)
+    E1_sigma_x2[i] = get(E_i, [4], NaN)
+    E1_sigma_x2_var[i] = get(E_i_var, [4], NaN)
+    V1_sigma_x2[i] = get(V_i, [4], NaN)
+    V1_sigma_x2_var[i] = get(V_i_var, [4], NaN)
+end
 
-# gemcs_plot = plot(p1, p2, p3, p4, layout=(2,2), size=(900,700), title="Single HDMR Comp GEMCS")
+α = 0.05
+z = quantile(Normal(), 1 - α/2)  # ≈ 1.96 for 95% CI
 
-display(lemcs_plot)
-# display(gemcs_plot)
+# --- Mean plots with CI ---
+ci1_lower = E1_mu_x1 .- z .* sqrt.(max.(E1_mu_x1_var, 0.0))
+ci1_upper = E1_mu_x1 .+ z .* sqrt.(max.(E1_mu_x1_var, 0.0))
+lp1 = plot(mu_range, E1_mu_x1, ribbon=(E1_mu_x1 - ci1_lower, ci1_upper - E1_mu_x1),
+    xlabel="μ₁", ylabel="E_RS_1", title="x1 μ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_RS_1 ± 95% CI")
+
+ci2_lower = E1_mu_x2 .- z .* sqrt.(max.(E1_mu_x2_var, 0.0))
+ci2_upper = E1_mu_x2 .+ z .* sqrt.(max.(E1_mu_x2_var, 0.0))
+lp2 = plot(mu_range, E1_mu_x2, ribbon=(E1_mu_x2 - ci2_lower, ci2_upper - E1_mu_x2),
+    xlabel="μ₂", ylabel="E_RS_3", title="x2 μ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_RS_3 ± 95% CI")
+
+ci3_lower = E1_sigma_x1 .- z .* sqrt.(max.(E1_sigma_x1_var, 0.0))
+ci3_upper = E1_sigma_x1 .+ z .* sqrt.(max.(E1_sigma_x1_var, 0.0))
+lp3 = plot(sigma_range, E1_sigma_x1, ribbon=(E1_sigma_x1 - ci3_lower, ci3_upper - E1_sigma_x1),
+    xlabel="σ₁", ylabel="E_RS_2", title="x1 σ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_RS_2 ± 95% CI")
+
+ci4_lower = E1_sigma_x2 .- z .* sqrt.(max.(E1_sigma_x2_var, 0.0))
+ci4_upper = E1_sigma_x2 .+ z .* sqrt.(max.(E1_sigma_x2_var, 0.0))
+lp4 = plot(sigma_range, E1_sigma_x2, ribbon=(E1_sigma_x2 - ci4_lower, ci4_upper - E1_sigma_x2),
+    xlabel="σ₂", ylabel="E_RS_4", title="x2 σ mean", legend=:topright, ylims=(-0.15, 0.15), color=:blue, label="E_RS_4 ± 95% CI")
+
+gemcs_mean_plot = plot(lp1, lp2, lp3, lp4, layout=(2,2), size=(900,700), title="GEMCS Mean with 95% CI")
+
+# --- Second moment plots with CI ---
+ci1_lower2 = V1_mu_x1 .- z .* sqrt.(max.(V1_mu_x1_var, 0.0))
+ci1_upper2 = V1_mu_x1 .+ z .* sqrt.(max.(V1_mu_x1_var, 0.0))
+lp1_2 = plot(mu_range, V1_mu_x1, ribbon=(V1_mu_x1 - ci1_lower2, ci1_upper2 - V1_mu_x1),
+    xlabel="μ₁", ylabel="V_RS_1", title="x1 μ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_RS_1 ± 95% CI")
+
+ci2_lower2 = V1_mu_x2 .- z .* sqrt.(max.(V1_mu_x2_var, 0.0))
+ci2_upper2 = V1_mu_x2 .+ z .* sqrt.(max.(V1_mu_x2_var, 0.0))
+lp2_2 = plot(mu_range, V1_mu_x2, ribbon=(V1_mu_x2 - ci2_lower2, ci2_upper2 - V1_mu_x2),
+    xlabel="μ₂", ylabel="V_RS_3", title="x2 μ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_RS_3 ± 95% CI")
+
+ci3_lower2 = V1_sigma_x1 .- z .* sqrt.(max.(V1_sigma_x1_var, 0.0))
+ci3_upper2 = V1_sigma_x1 .+ z .* sqrt.(max.(V1_sigma_x1_var, 0.0))
+lp3_2 = plot(sigma_range, V1_sigma_x1, ribbon=(V1_sigma_x1 - ci3_lower2, ci3_upper2 - V1_sigma_x1),
+    xlabel="σ₁", ylabel="V_RS_2", title="x1 σ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_RS_2 ± 95% CI")
+
+ci4_lower2 = V1_sigma_x2 .- z .* sqrt.(max.(V1_sigma_x2_var, 0.0))
+ci4_upper2 = V1_sigma_x2 .+ z .* sqrt.(max.(V1_sigma_x2_var, 0.0))
+lp4_2 = plot(sigma_range, V1_sigma_x2, ribbon=(V1_sigma_x2 - ci4_lower2, ci4_upper2 - V1_sigma_x2),
+    xlabel="σ₂", ylabel="V_RS_4", title="x2 σ second moment", legend=:topright, ylims=(-0.30, 0.65), color=:green, label="V_RS_4 ± 95% CI")
+
+gemcs_secondmoment_plot = plot(lp1_2, lp2_2, lp3_2, lp4_2, layout=(2,2), size=(900,700), title="GEMCS Second Moment with 95% CI")
+
+display(gemcs_mean_plot)
+display(gemcs_secondmoment_plot)
