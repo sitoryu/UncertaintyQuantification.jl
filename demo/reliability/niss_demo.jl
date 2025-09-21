@@ -1,4 +1,4 @@
-# NISS (Non-Intrusive Sensitivity Analysis) Demo
+# NISS (Non-Intrusive Sensitivity Analysis) demo toy example from paper
 using Pkg
 Pkg.activate(".")
 using UncertaintyQuantification
@@ -49,16 +49,16 @@ lemcs_result = lemcs_cut_hdmr(
     inputs,
     :output,
     anchor;
-    order=2,
-    N=5000
+    order=1,
+    N = LatinHypercubeSampling(5000)
 )
 println("\nRunning GEMCS-cut-HDMR analysis...")
 gemcs_result = gemcs_rs_hdmr(
     model,
     inputs,
     :output;
-    order=2,
-    N=3000
+    order=1,
+    N = 5000
 )
 
 # E_1, hdmr_variances= lemcs_result(Dict(:x1 => [0.2, 1.0], :x2 => [0.0, 1.0]))
@@ -67,7 +67,7 @@ gemcs_result = gemcs_rs_hdmr(
 println("\nCreating Plots...")
 
 # LEMCS PLOTS
-mu_range = range(-0.2, 0.2, length=50)
+mu_range = range(-0.2, 0.2, length=20)
 E1_mu_x1 = zeros(length(mu_range)); E1_mu_x2 = zeros(length(mu_range))
 V1_mu_x1 = zeros(length(mu_range)); V1_mu_x2 = zeros(length(mu_range))
 E1_mu_x1_var = zeros(length(mu_range)); E1_mu_x2_var = zeros(length(mu_range))
@@ -85,7 +85,7 @@ for (i, mu) in enumerate(mu_range)
     V1_mu_x2_var[i] = get(V_i_var, [3], NaN)
 end
 
-sigma_range = range(0.8, 1.2, length=50)
+sigma_range = range(0.8, 1.2, length=20)
 E1_sigma_x1 = zeros(length(sigma_range)); E1_sigma_x2 = zeros(length(sigma_range))
 V1_sigma_x1 = zeros(length(sigma_range)); V1_sigma_x2 = zeros(length(sigma_range))
 E1_sigma_x1_var = zeros(length(sigma_range)); E1_sigma_x2_var = zeros(length(sigma_range))
@@ -156,7 +156,7 @@ display(lemcs_mean_plot)
 display(lemcs_secondmoment_plot)
 
 # GEMCS PLOTS
-mu_range = range(-0.2, 0.2, length=50)
+mu_range = range(-0.2, 0.2, length=20)
 E1_mu_x1 = zeros(length(mu_range)); E1_mu_x2 = zeros(length(mu_range))
 V1_mu_x1 = zeros(length(mu_range)); V1_mu_x2 = zeros(length(mu_range))
 E1_mu_x1_var = zeros(length(mu_range)); E1_mu_x2_var = zeros(length(mu_range))
@@ -174,7 +174,7 @@ for (i, mu) in enumerate(mu_range)
     V1_mu_x2_var[i] = get(V_i_var, [3], NaN)
 end
 
-sigma_range = range(0.8, 1.2, length=50)
+sigma_range = range(0.8, 1.2, length=20)
 E1_sigma_x1 = zeros(length(sigma_range)); E1_sigma_x2 = zeros(length(sigma_range))
 V1_sigma_x1 = zeros(length(sigma_range)); V1_sigma_x2 = zeros(length(sigma_range))
 E1_sigma_x1_var = zeros(length(sigma_range)); E1_sigma_x2_var = zeros(length(sigma_range))

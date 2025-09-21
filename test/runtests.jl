@@ -37,6 +37,7 @@ include("modelupdating/bayesianupdating.jl")
 include("modelupdating/bayesianMAP.jl")
 
 include("reliability/form.jl")
+include("reliability/niss.jl")
 include("reliability/probabilityoffailure.jl")
 include("reliability/probabilityoffailure_imprecise.jl")
 

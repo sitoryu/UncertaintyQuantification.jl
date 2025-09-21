@@ -9,6 +9,7 @@ using Distributed
 using FastGaussQuadrature
 using FiniteDifferences
 using Format
+using HCubature
 using LinearAlgebra
 using MeshAdaptiveDirectSearch
 using Monomials
@@ -82,6 +83,7 @@ export AbstractQuasiMonteCarlo
 export AbstractSimulation
 export Copula
 export DeterministicUQInput
+export NISS  # TODO not sure if needed
 export RandomUQInput
 export ImpreciseUQInput
 export UQInput
@@ -107,6 +109,7 @@ export FractionalFactorial
 export FullFactorial
 export GaussianCopula
 export GaussQuadrature
+export GEMCS_RS_HDMR
 export HaltonSampling
 export HermiteBasis
 export ImportanceSampling
@@ -117,6 +120,7 @@ export LatinHypercubeSampling
 export LatticeRuleSampling
 export LeastSquares
 export WeightedApproximateFetekePoints
+export LEMCSCutHDMR
 export LegendreBasis
 export LineSampling
 export SingleComponentMetropolisHastings
