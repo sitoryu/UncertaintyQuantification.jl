@@ -49,8 +49,8 @@ function (niss::NISS)(θ::Dict{Symbol, Vector{Float64}}; detailed::Bool=false)
 
     hdmr_components, hdmr_variances = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
     hdmr_comp_second_moment, hdmr_comp_second_moment_variances = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
-    
-    hdmr_components[Int[]], hdmr_variances[Int[]] = mean(y_values), var(y_values) / N  # recheck this later especially for variance
+
+    hdmr_components[Int[]], hdmr_variances[Int[]] = mean(y_values), var(y_values) / N  # TODO recheck this later especially for variance
     hdmr_comp_second_moment[Int[]], hdmr_comp_second_moment_variances[Int[]] = mean(y_values.^2), var(y_values.^2) / N # same here
     
     for current_order in 1:niss.order
@@ -74,10 +74,12 @@ function lemcs_cut_hdmr(
     output::Symbol, 
     anchor::Dict{Symbol, Vector{Float64}}; 
     order::Int=2, 
-    N::Int=1000
+    N::AbstractMonteCarlo = MonteCarlo(1000)
 )
     anchor_inputs = [map_to_precise(anchor[pbox.name], pbox) for pbox in inputs]
+
     samples = sample(anchor_inputs, N)
+    
     evaluate!(model, samples)
 
     lemcs_cut_hdmr = LEMCSCutHDMR(anchor, inputs, output, order, samples)
@@ -91,8 +93,24 @@ function gemcs_rs_hdmr(
     inputs::Vector{<:ProbabilityBox},
     output::Symbol;
     order::Int=2, 
-    N::Int=1000
+    N::Int=5000  # TODO maybe not pass as Int ? not sure but currently not consistant with lemcs_cut_hdmr()
 )
+    anchor = _get_gemcs_anchorpoints(inputs, N)
+
+    anchor_samples_list = map(anchor_point -> begin
+        anchor_inputs = [map_to_precise(anchor_point[pbox.name], pbox) for pbox in inputs]
+        sample(anchor_inputs, 1)
+    end, anchor)
+    samples = vcat(anchor_samples_list...)
+    evaluate!(model, samples)
+
+    gemcs_rs_hdmr = GEMCS_RS_HDMR(anchor, inputs, output, order, samples)
+    sensitivity_indices = _compute_sensitivity_indices(gemcs_rs_hdmr)
+
+    return GEMCS_RS_HDMR(anchor, inputs, output, order, samples, sensitivity_indices)
+end
+
+function _get_gemcs_anchorpoints(inputs::Vector{<:ProbabilityBox}, N::Int)
     total_params = sum(length(pbox.parameters) for pbox in inputs)
     param_bounds = [(param.lb, param.ub) for pbox in inputs for param in pbox.parameters]
 
@@ -111,18 +129,7 @@ function gemcs_rs_hdmr(
         end
         anchor[i] = anchor_point
     end
-
-    anchor_samples_list = map(anchor_point -> begin
-        anchor_inputs = [map_to_precise(anchor_point[pbox.name], pbox) for pbox in inputs]
-        sample(anchor_inputs, 1)
-    end, anchor)
-    samples = vcat(anchor_samples_list...)
-    evaluate!(model, samples)
-
-    gemcs_rs_hdmr = GEMCS_RS_HDMR(anchor, inputs, output, order, samples)
-    sensitivity_indices = _compute_sensitivity_indices(gemcs_rs_hdmr)
-
-    return GEMCS_RS_HDMR(anchor, inputs, output, order, samples, sensitivity_indices)
+    return anchor
 end
 
 function _compute_combination_component(
@@ -171,7 +178,7 @@ function _compute_combination_component(
     return mean_y, variance_y, second_moment_y, second_moment_variance_y
 end
 
-function _compute_importance_ratio(  # TODO currently max order 2
+function _compute_importance_ratio(
     sample_point::Vector{Float64}, 
     combination_indices::Vector{Int}, 
     reference_point::Dict{Symbol, Vector{Float64}}, 
@@ -179,17 +186,23 @@ function _compute_importance_ratio(  # TODO currently max order 2
     inputs::Vector{<:ProbabilityBox},
     order::Int
 )
-    total_ratio = _compute_conditional_pdf_ratio(sample_point, combination_indices, reference_point, θ, inputs)
-    
-    for subset_size in 1:(order-1)
-        # sign = (-1)^subset_size
-        for subset in _combinations(1:order, subset_size) 
-            subset_combination_indices = [combination_indices[i] for i in subset]
-            total_ratio -= _compute_conditional_pdf_ratio(sample_point, subset_combination_indices, reference_point, θ, inputs)
+    rcut = Dict{Vector{Int}, Float64}()
+
+    for k in 1:order
+        for combo in _combinations(1:order, k)
+            subset_combination_indices = [combination_indices[i] for i in combo]
+            expr = _compute_conditional_pdf_ratio(sample_point, subset_combination_indices, reference_point, θ, inputs)
+
+            for j in 1:k-1
+                for subcombo in _combinations(combo, j)
+                    expr -= rcut[collect(subcombo)]
+                end
+            end
+        rcut[combo] = expr - 1
         end
     end
     
-    return total_ratio + (-1)^order  # Check this later if it is inclusion/exclution for higher order or not
+    return rcut[_combinations(1:order, order)[1]]
 end
 
 function _compute_conditional_pdf_ratio(
@@ -214,54 +227,30 @@ function _compute_conditional_pdf_ratio(
     return denominator_pdf ≈ 0.0 ? 1.0 : numerator_pdf / denominator_pdf
 end
 
-function _compute_joint_pdf(     # currently independent only
+function _compute_joint_pdf(
     sample_point::Vector{Float64}, 
     parameter_values::Dict{Symbol, Vector{Float64}}, 
     inputs::Vector{<:ProbabilityBox}
 )
-    joint_pdf = 1.0
-    
-    for (i, pbox) in enumerate(inputs)
+    return reduce(*, map(i -> begin
+        pbox = inputs[i]
         precise_rv = map_to_precise(parameter_values[pbox.name], pbox)
-        
-        individual_pdf = pdf(precise_rv.dist, sample_point[i])
-        joint_pdf *= individual_pdf
-        
-        if individual_pdf ≈ 0.0
-            return 0.0
-        end
-    end
-    
-    return joint_pdf
+        pdf(precise_rv.dist, sample_point[i])
+    end, 1:length(inputs)))
 end
 
-function _compute_sensitivity_indices(lemcs::LEMCSCutHDMR; Nt::Int=50) # TODO clean up this whole mess
-    total_params = sum(length(p.parameters) for p in lemcs.inputs)
-    varnames = [pbox.name for pbox in lemcs.inputs]
-    sample_matrix = Matrix(lemcs.samples[:, varnames])
-    y_values = lemcs.samples[:, lemcs.output]
+function _compute_sensitivity_indices(niss::NISS)
+    total_params = sum(length(p.parameters) for p in niss.inputs)
+    varnames = [pbox.name for pbox in niss.inputs]
+    sample_matrix = Matrix(niss.samples[:, varnames])
+    y_values = niss.samples[:, niss.output]
 
-    param_ranges = Dict{Int, Vector{Float64}}()
-    param_names = String[]
-    
-    count = 0
-    for (var_idx, pbox) in enumerate(lemcs.inputs)
-        for (param_idx, param) in enumerate(pbox.parameters)
-            count += 1
-            
-            interval = pbox.parameters[param_idx]
-            param_min = interval.lb
-            param_max = interval.ub
-            
-            param_ranges[count] = range(param_min, param_max, length=Nt)
-            push!(param_names, "$(pbox.name)_$(param.name)")
-        end
-    end
+    param_bounds, param_names = _get_param_bounds_and_names(niss.inputs)
 
     function get_component_function(indices::Vector{Int})
         return function(θ_dict::Dict{Symbol, Vector{Float64}})
             estimate, _, second_moment, _ = _compute_combination_component(
-                sample_matrix, y_values, lemcs.inputs, indices, lemcs.anchor, θ_dict
+                sample_matrix, y_values, niss.inputs, indices, niss.anchor, θ_dict
             )
             return estimate, second_moment
         end
@@ -270,165 +259,259 @@ function _compute_sensitivity_indices(lemcs::LEMCSCutHDMR; Nt::Int=50) # TODO cl
     component_vars = Dict{Vector{Int}, Float64}()
     component_vars_second_moment = Dict{Vector{Int}, Float64}()
 
-    for i in 1:total_params
-        component_func = get_component_function([i])
-        vals = param_ranges[i]
-        
-        expectation_values = zeros(Nt)
-        second_moment_values = zeros(Nt)
-        
-        for k in 1:Nt
-            θ_dict = deepcopy(lemcs.anchor)
-
-            param_idx = 0
-            for pbox in lemcs.inputs
-                for j in 1:length(pbox.parameters)
-                    param_idx += 1
-                    if param_idx == i
-                        θ_dict[pbox.name][j] = vals[k]
-                        break
-                    end
-                end
+    for order in 1:niss.order
+        for indices in _combinations(1:total_params, order)
+            bounds = [param_bounds[i] for i in indices]
+            function f(x)
+                θ_dict = _get_anchor_template(niss.anchor)
+                _set_parameters!(θ_dict, niss.inputs, collect(indices), x)
+                estimate, second_moment = get_component_function(collect(indices))(θ_dict)
+                return [estimate, estimate^2, second_moment, second_moment^2]
             end
-            
-            estimate, second_moment = component_func(θ_dict)
-            expectation_values[k] = estimate
-            second_moment_values[k] = second_moment
-        end
-        
-        component_vars[[i]] = var(expectation_values)
-        component_vars_second_moment[[i]] = var(second_moment_values)
-    end
-
-    if lemcs.order >= 2
-        for i in 1:total_params
-            for j in i+1:total_params
-                component_func = get_component_function(sort([i,j]))
-                vals_i = param_ranges[i]
-                vals_j = param_ranges[j]
-                
-                coarse_Nt = min(Nt, 20)
-                i_indices = round.(Int, range(1, Nt, length=coarse_Nt))
-                j_indices = round.(Int, range(1, Nt, length=coarse_Nt))
-                
-                expectation_values = zeros(coarse_Nt, coarse_Nt)
-                second_moment_values = zeros(coarse_Nt, coarse_Nt)
-                
-                for (ki, k) in enumerate(i_indices)
-                    for (lj, l) in enumerate(j_indices)
-                        θ_dict = deepcopy(lemcs.anchor)
-                        param_idx = 0
-                        for pbox in lemcs.inputs
-                            for m in 1:length(pbox.parameters)
-                                param_idx += 1
-                                if param_idx == i
-                                    θ_dict[pbox.name][m] = vals_i[k]
-                                elseif param_idx == j
-                                    θ_dict[pbox.name][m] = vals_j[l]
-                                end
-                            end
-                        end
-                        estimate, second_moment = component_func(θ_dict)
-                        expectation_values[ki, lj] = estimate
-                        second_moment_values[ki, lj] = second_moment
-                    end
-                end
-                
-                component_vars[sort([i,j])] = var(vec(expectation_values))
-                component_vars_second_moment[sort([i,j])] = var(vec(second_moment_values))
-            end
+            lower = [b[1] for b in bounds]
+            upper = [b[2] for b in bounds]
+            (integral, err) = hcubature(f, lower, upper; rtol=order==1 ? 1e-3 : 1e-2, maxevals=order==1 ? 10000 : 20000)
+            volume = prod(b[2] - b[1] for b in bounds)
+            mean, mean_sq, mean_second, mean_second_sq = integral ./ volume
+            component_vars[collect(indices)] = mean_sq - mean^2
+            component_vars_second_moment[collect(indices)] = mean_second_sq - mean_second^2
         end
     end
 
-    total_var = sum(values(component_vars))
-    total_var_second_moment = sum(values(component_vars_second_moment))
-    
-    sensitivity_indices = Dict{Symbol, Tuple{Float64, Float64}}()
-    
-    for (indices, variance) in component_vars
-        if length(indices) == 1
-            param_name = Symbol(param_names[indices[1]])
-        else
-            names_combined = [param_names[i] for i in indices]
-            param_name = Symbol(join(names_combined, "_"))
-        end
-
-        se_sensitivity_index = total_var > 0 ? variance / total_var : 0.0
-        sv_sensitivity_index = total_var_second_moment > 0 ? component_vars_second_moment[indices] / total_var_second_moment : 0.0
-        sensitivity_indices[param_name] = (se_sensitivity_index, sv_sensitivity_index)
-    end
-
-    return sensitivity_indices
+    return _assign_sensitivity_indices(component_vars, component_vars_second_moment, param_names)
 end
 
-function _compute_sensitivity_indices(gemcs::GEMCS_RS_HDMR) # TODO clean up this whole function
-    total_params = sum(length(p.parameters) for p in gemcs.inputs)
-    varnames = [pbox.name for pbox in gemcs.inputs]
-    sample_matrix = Matrix(gemcs.samples[:, varnames])
-    y_values = gemcs.samples[:, gemcs.output]
-    N = size(sample_matrix, 1)
-
+function _get_param_bounds_and_names(inputs)
+    param_bounds = Dict{Int, Tuple{Float64, Float64}}()
     param_names = String[]
-    for (pbox) in gemcs.inputs
-        for (param) in pbox.parameters
+    count = 0
+    for pbox in inputs
+        for param in pbox.parameters
+            count += 1
+            param_bounds[count] = (param.lb, param.ub)
             push!(param_names, "$(pbox.name)_$(param.name)")
         end
     end
+    return param_bounds, param_names
+end
 
-    mean_y, var_y = Vector{Dict{Vector{Int}, Float64}}(undef, N), Vector{Dict{Vector{Int}, Float64}}(undef, N)
-    sec_moment_y, var_sec_moment_y = Vector{Dict{Vector{Int}, Float64}}(undef, N), Vector{Dict{Vector{Int}, Float64}}(undef, N)
-
-    for k in 1:N
-        mean_y[k], var_y[k], sec_moment_y[k], var_sec_moment_y[k] = gemcs(gemcs.anchor[k]; detailed=true)
-        (k % 100 == 0 || k == N) && println("Eval $k / $N done.")
+function _get_anchor_template(anchor)
+    if isa(anchor, Vector)
+        return deepcopy(anchor[1])
+    else
+        return deepcopy(anchor)
     end
+end
 
-    sens_comp_vars, sens_comp_variance = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
-    sens_second_moment, sens_second_moment_variance_y = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
-
-    for i in _combinations(1:total_params, 1)
-        expectation_values = [get(mean_y[k], i, NaN) for k in 1:N]
-        variance_values = [get(var_y[k], i, NaN) for k in 1:N]
-        second_moment_values = [get(sec_moment_y[k], i, NaN) for k in 1:N]
-        var_second_moment_values = [get(var_sec_moment_y[k], i, NaN) for k in 1:N]
-
-        sens_comp_vars[i] = mean(expectation_values.^2)
-        sens_comp_variance[i] = var(variance_values)
-        sens_second_moment[i] = mean(second_moment_values.^2)
-        sens_second_moment_variance_y[i] = var(var_second_moment_values)
-    end
-
-    if gemcs.order >= 2
-        for i in _combinations(1:total_params, 2)
-            expectation_values = [get(mean_y[k], i, NaN) for k in 1:N]
-            variance_values = [get(var_y[k], i, NaN) for k in 1:N]
-            second_moment_values = [get(sec_moment_y[k], i, NaN) for k in 1:N]
-            var_second_moment_values = [get(var_sec_moment_y[k], i, NaN) for k in 1:N]
-
-            sens_comp_vars[i] = mean(expectation_values.^2)
-            sens_comp_variance[i] = var(variance_values)
-            sens_second_moment[i] = mean(second_moment_values.^2)
-            sens_second_moment_variance_y[i] = var(var_second_moment_values)
+function _set_parameters!(θ_dict::Dict{Symbol, Vector{Float64}}, inputs::Vector{<:ProbabilityBox}, indices::Vector{Int}, values::AbstractVector)
+    param_idx = 0
+    for pbox in inputs
+        for j in 1:length(pbox.parameters)
+            param_idx += 1
+            for (k, idx) in enumerate(indices)
+                if param_idx == idx
+                    θ_dict[pbox.name][j] = values[k]
+                end
+            end
         end
     end
+end
 
-    total_var = var([sum(values(v)) for v in values(mean_y)])
-    total_var_second_moment = var([sum(values(v)) for v in values(sec_moment_y)])
-    
+function _assign_sensitivity_indices(comp_vars::Dict{Vector{Int}, Float64}, comp_vars_second_mom::Dict{Vector{Int}, Float64}, param_names::Vector{String})
+    total_var = sum(values(comp_vars))
+    total_var_second_moment = sum(values(comp_vars_second_mom))
     sensitivity_indices = Dict{Symbol, Tuple{Float64, Float64}}()
-    
-    for (indices, variance) in sens_comp_vars
+    for (indices, comp_sensitivity) in comp_vars
         if length(indices) == 1
             param_name = Symbol(param_names[indices[1]])
         else
             names_combined = [param_names[i] for i in indices]
             param_name = Symbol(join(names_combined, "_"))
         end
-
-        se_sensitivity_index = total_var > 0 ? variance / total_var : 0.0
-        sv_sensitivity_index = total_var_second_moment > 0 ? sens_second_moment[indices] / total_var_second_moment : 0.0
+        se_sensitivity_index = total_var > 0 ? comp_sensitivity / total_var : 0.0
+        sv_sensitivity_index = total_var_second_moment > 0 ? comp_vars_second_mom[indices] / total_var_second_moment : 0.0
         sensitivity_indices[param_name] = (se_sensitivity_index, sv_sensitivity_index)
     end
-
     return sensitivity_indices
 end
+
+# Old version without hcubature kept for reference
+
+# function _compute_sensitivity_indices(lemcs::LEMCSCutHDMR; Nt::Int=50) # TODO clean up this whole mess
+#     total_params = sum(length(p.parameters) for p in lemcs.inputs)
+#     varnames = [pbox.name for pbox in lemcs.inputs]
+#     sample_matrix = Matrix(lemcs.samples[:, varnames])
+#     y_values = lemcs.samples[:, lemcs.output]
+
+#     param_ranges = Dict{Int, Vector{Float64}}()
+#     param_names = String[]
+    
+#     count = 0
+#     for (var_idx, pbox) in enumerate(lemcs.inputs)
+#         for (param_idx, param) in enumerate(pbox.parameters)
+#             count += 1
+            
+#             interval = pbox.parameters[param_idx]
+#             param_min = interval.lb
+#             param_max = interval.ub
+            
+#             param_ranges[count] = range(param_min, param_max, length=Nt)
+#             push!(param_names, "$(pbox.name)_$(param.name)")
+#         end
+#     end
+
+#     function get_component_function(indices::Vector{Int})
+#         return function(θ_dict::Dict{Symbol, Vector{Float64}})
+#             estimate, _, second_moment, _ = _compute_combination_component(
+#                 sample_matrix, y_values, lemcs.inputs, indices, lemcs.anchor, θ_dict
+#             )
+#             return estimate, second_moment
+#         end
+#     end
+
+#     component_vars = Dict{Vector{Int}, Float64}()
+#     component_vars_second_moment = Dict{Vector{Int}, Float64}()
+
+#     for i in 1:total_params
+#         component_func = get_component_function([i])
+#         vals = param_ranges[i]
+        
+#         expectation_values = zeros(Nt)
+#         second_moment_values = zeros(Nt)
+        
+#         for k in 1:Nt
+#             θ_dict = deepcopy(lemcs.anchor)
+
+#             param_idx = 0
+#             for pbox in lemcs.inputs
+#                 for j in 1:length(pbox.parameters)
+#                     param_idx += 1
+#                     if param_idx == i
+#                         θ_dict[pbox.name][j] = vals[k]
+#                         break
+#                     end
+#                 end
+#             end
+            
+#             estimate, second_moment = component_func(θ_dict)
+#             expectation_values[k] = estimate
+#             second_moment_values[k] = second_moment
+#         end
+        
+#         component_vars[[i]] = var(expectation_values)
+#         component_vars_second_moment[[i]] = var(second_moment_values)
+#     end
+
+#     if lemcs.order >= 2
+#         for i in 1:total_params
+#             for j in i+1:total_params
+#                 component_func = get_component_function(sort([i,j]))
+#                 vals_i = param_ranges[i]
+#                 vals_j = param_ranges[j]
+                
+#                 coarse_Nt = min(Nt, 20)
+#                 i_indices = round.(Int, range(1, Nt, length=coarse_Nt))
+#                 j_indices = round.(Int, range(1, Nt, length=coarse_Nt))
+                
+#                 expectation_values = zeros(coarse_Nt, coarse_Nt)
+#                 second_moment_values = zeros(coarse_Nt, coarse_Nt)
+                
+#                 for (ki, k) in enumerate(i_indices)
+#                     for (lj, l) in enumerate(j_indices)
+#                         θ_dict = deepcopy(lemcs.anchor)
+#                         param_idx = 0
+#                         for pbox in lemcs.inputs
+#                             for m in 1:length(pbox.parameters)
+#                                 param_idx += 1
+#                                 if param_idx == i
+#                                     θ_dict[pbox.name][m] = vals_i[k]
+#                                 elseif param_idx == j
+#                                     θ_dict[pbox.name][m] = vals_j[l]
+#                                 end
+#                             end
+#                         end
+#                         estimate, second_moment = component_func(θ_dict)
+#                         expectation_values[ki, lj] = estimate
+#                         second_moment_values[ki, lj] = second_moment
+#                     end
+#                 end
+                
+#                 component_vars[sort([i,j])] = var(vec(expectation_values))
+#                 component_vars_second_moment[sort([i,j])] = var(vec(second_moment_values))
+#             end
+#         end
+#     end
+
+#     total_var = sum(values(component_vars))
+#     total_var_second_moment = sum(values(component_vars_second_moment))
+    
+#     sensitivity_indices = Dict{Symbol, Tuple{Float64, Float64}}()
+    
+#     for (indices, variance) in component_vars
+#         if length(indices) == 1
+#             param_name = Symbol(param_names[indices[1]])
+#         else
+#             names_combined = [param_names[i] for i in indices]
+#             param_name = Symbol(join(names_combined, "_"))
+#         end
+
+#         se_sensitivity_index = total_var > 0 ? variance / total_var : 0.0
+#         sv_sensitivity_index = total_var_second_moment > 0 ? component_vars_second_moment[indices] / total_var_second_moment : 0.0
+#         sensitivity_indices[param_name] = (se_sensitivity_index, sv_sensitivity_index)
+#     end
+
+#     return sensitivity_indices
+# end
+
+# function _compute_sensitivity_indices(gemcs::GEMCS_RS_HDMR) # TODO clean up this whole function
+#     total_params = sum(length(p.parameters) for p in gemcs.inputs)
+#     varnames = [pbox.name for pbox in gemcs.inputs]
+#     sample_matrix = Matrix(gemcs.samples[:, varnames])
+#     y_values = gemcs.samples[:, gemcs.output]
+#     N = size(sample_matrix, 1)
+
+#     param_names = String[]
+#     for (pbox) in gemcs.inputs
+#         for (param) in pbox.parameters
+#             push!(param_names, "$(pbox.name)_$(param.name)")
+#         end
+#     end
+
+#     mean_y, var_y = Vector{Dict{Vector{Int}, Float64}}(undef, N), Vector{Dict{Vector{Int}, Float64}}(undef, N)
+#     sec_moment_y, var_sec_moment_y = Vector{Dict{Vector{Int}, Float64}}(undef, N), Vector{Dict{Vector{Int}, Float64}}(undef, N)
+
+#     for k in 1:N
+#         mean_y[k], var_y[k], sec_moment_y[k], var_sec_moment_y[k] = gemcs(gemcs.anchor[k]; detailed=true)
+#         (k % 100 == 0 || k == N) && println("Eval $k / $N done.")
+#     end
+
+#     sens_comp_vars, sens_comp_variance = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
+#     sens_second_moment, sens_second_moment_variance_y = Dict{Vector{Int}, Float64}(), Dict{Vector{Int}, Float64}()
+
+#     for i in _combinations(1:total_params, 1)
+#         expectation_values = [get(mean_y[k], i, NaN) for k in 1:N]
+#         variance_values = [get(var_y[k], i, NaN) for k in 1:N]
+#         second_moment_values = [get(sec_moment_y[k], i, NaN) for k in 1:N]
+#         var_second_moment_values = [get(var_sec_moment_y[k], i, NaN) for k in 1:N]
+
+#         sens_comp_vars[i] = mean(expectation_values.^2)
+#         sens_comp_variance[i] = var(variance_values)
+#         sens_second_moment[i] = mean(second_moment_values.^2)
+#         sens_second_moment_variance_y[i] = var(var_second_moment_values)
+#     end
+
+#     if gemcs.order >= 2
+#         for i in _combinations(1:total_params, 2)
+#             expectation_values = [get(mean_y[k], i, NaN) for k in 1:N]
+#             variance_values = [get(var_y[k], i, NaN) for k in 1:N]
+#             second_moment_values = [get(sec_moment_y[k], i, NaN) for k in 1:N]
+#             var_second_moment_values = [get(var_sec_moment_y[k], i, NaN) for k in 1:N]
+
+#             sens_comp_vars[i] = mean(expectation_values.^2)
+#             sens_comp_variance[i] = var(variance_values)
+#             sens_second_moment[i] = mean(second_moment_values.^2)
+#             sens_second_moment_variance_y[i] = var(var_second_moment_values)
+#         end
+#     end
+#     return assign_sensitivity_indices(sens_comp_vars, sens_second_moment, param_names)
+# end
