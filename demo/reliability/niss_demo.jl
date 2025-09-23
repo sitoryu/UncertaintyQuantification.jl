@@ -25,14 +25,14 @@ end
 model = Model(g_function, :output)
 
 inputs = [
-    ProbabilityBox{Normal}([
-        Interval(-0.2, 0.2, :μ), 
-        Interval(0.8, 1.2, :σ)
-    ], :x1),
-    ProbabilityBox{Normal}([
-        Interval(-0.2, 0.2, :μ), 
-        Interval(0.8, 1.2, :σ)
-    ], :x2)
+    RandomVariable(ProbabilityBox{Normal}([
+        :μ => Interval(-0.2, 0.2),
+        :σ => Interval(0.8, 1.2)
+    ]), :x1),
+    RandomVariable(ProbabilityBox{Normal}([
+        :μ => Interval(-0.2, 0.2),
+        :σ => Interval(0.8, 1.2)
+    ]), :x2)
 ]
 
 # Define anchor point (parameter values at center/paper values)

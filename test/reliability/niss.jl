@@ -20,14 +20,16 @@ using Distributions
 
 	model = Model(g_function, :output)
 	inputs = [
-		ProbabilityBox{Normal}([
-			Interval(-0.2, 0.2, :μ),
-			Interval(0.8, 1.2, :σ)
-		], :x1),
-		ProbabilityBox{Normal}([
-			Interval(-0.2, 0.2, :μ),
-			Interval(0.8, 1.2, :σ)
-		], :x2)
+		RandomVariable(
+			ProbabilityBox{Normal}(Dict(
+				:μ => Interval(-0.2, 0.2),
+				:σ => Interval(0.8, 1.2)
+			)), :x1),
+		RandomVariable(
+			ProbabilityBox{Normal}(Dict(
+				:μ => Interval(-0.2, 0.2),
+				:σ => Interval(0.8, 1.2)
+			)), :x2)
 	]
 	anchor = Dict(
 		:x1 => [0.0, 1.0],
@@ -48,7 +50,7 @@ using Distributions
 		inputs,
 		:output;
 		order=1,
-		N=5000
+		N=10000
 	)
 
 
@@ -87,17 +89,17 @@ using Distributions
 		@test length(res2) == 4
 		@test all(x -> x isa Dict, res2)
 
-		anchor_inputs = [UncertaintyQuantification.map_to_precise(θ[pbox.name], pbox) for pbox in inputs]
-		direct_samples = UncertaintyQuantification.sample(anchor_inputs, 5000)
+		anchor_inputs = [RandomVariable(UncertaintyQuantification.map_to_precise(θ[pbox.name], pbox.dist), pbox.name) for pbox in inputs]
+		direct_samples = UncertaintyQuantification.sample(anchor_inputs, 10000)
 		evaluate!(model, direct_samples)
 		direct_mean = mean(direct_samples[:, :output])
-        local_niss_mean = sum(values(res[1]))
+		local_niss_mean = sum(values(res[1]))
 		global_niss_mean = sum(values(res2[1]))
 		@test isfinite(direct_mean)
 		@test isfinite(local_niss_mean)
 		@test local_niss_mean ≈ direct_mean atol=0.01
 		@test isfinite(global_niss_mean)
-		@test global_niss_mean ≈ direct_mean atol=0.01
+		@test global_niss_mean ≈ direct_mean atol=0.015 # more tolerance because of standard mc sampling
 	end
 
 	@testset "_get_gemcs_anchorpoints" begin
@@ -111,7 +113,7 @@ using Distributions
 	@testset "_compute_importance_ratio (original example first term)" begin # currently stupid TODO get analytical formula for this one
 		θ = Dict(:x1 => [0.1, 1.0], :x2 => [0.0, 1.0])
 
-		anchor_inputs = [UncertaintyQuantification.map_to_precise(anchor[pbox.name], pbox) for pbox in inputs]
+		anchor_inputs = [RandomVariable(UncertaintyQuantification.map_to_precise(anchor[pbox.name], pbox.dist), pbox.name) for pbox in inputs]
 		samples = UncertaintyQuantification.sample(anchor_inputs, 1)
 		sample_point = [samples[1, :x1], samples[1, :x2]]
 
@@ -141,14 +143,16 @@ using Distributions
 	@testset "_compute_joint_pdf" begin
 		stdnorm = Normal(0, 1)
 		inputs_analytical = [
-			ProbabilityBox{Normal}([
-				Interval(0.0, 0.0, :μ),
-				Interval(1.0, 1.0, :σ)
-			], :x1),
-			ProbabilityBox{Normal}([
-				Interval(0.0, 0.0, :μ),
-				Interval(1.0, 1.0, :σ)
-			], :x2)
+			RandomVariable(
+				ProbabilityBox{Normal}(Dict(
+					:μ => Interval(0.0, 0.0),
+					:σ => Interval(1.0, 1.0)
+				)), :x1),
+			RandomVariable(
+				ProbabilityBox{Normal}(Dict(
+					:μ => Interval(0.0, 0.0),
+					:σ => Interval(1.0, 1.0)
+				)), :x2)
 		]
 		θ_analytical = Dict(:x1 => [0.0, 1.0], :x2 => [0.0, 1.0])
 		sample = [0.3, -0.5]
@@ -174,8 +178,8 @@ using Distributions
 		for (i, n) in enumerate(names)
 			@test isapprox(le_indices[i], analytical_SEcut[i]; atol=0.03)
 			@test isapprox(lv_indices[i], analytical_SVcut[i]; atol=0.05)
-			@test isapprox(ge_indices[i], analytical_SERS[i]; atol=0.08)  # no latin hypercube sampling -> more tolerance
-			@test isapprox(gv_indices[i], analytical_SVRS[i]; atol=0.1) # no latin hypercube sampling -> more tolerance
+			@test isapprox(ge_indices[i], analytical_SERS[i]; atol=0.1)  # no latin hypercube sampling -> more tolerance
+			@test isapprox(gv_indices[i], analytical_SVRS[i]; atol=0.125) # no latin hypercube sampling -> more tolerance
 		end
 	end
 

@@ -2,9 +2,10 @@
 
 abstract type NISS end
 
+
 struct LEMCSCutHDMR <: NISS
     anchor::Dict{Symbol, Vector{Float64}}
-    inputs::Vector{<:ProbabilityBox}
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}
     output::Symbol
     order::Int
     samples::DataFrame
@@ -13,7 +14,7 @@ end
 
 function LEMCSCutHDMR(
     anchor::Dict{Symbol, Vector{Float64}}, 
-    inputs::Vector{<:ProbabilityBox}, 
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, 
     output::Symbol, 
     order::Int, 
     samples::DataFrame
@@ -21,9 +22,10 @@ function LEMCSCutHDMR(
     return LEMCSCutHDMR(anchor, inputs, output, order, samples, Dict{Symbol, Tuple{Float64, Float64}}())
 end
 
+
 struct GEMCS_RS_HDMR <: NISS
     anchor::Vector{Dict{Symbol, Vector{Float64}}}
-    inputs::Vector{<:ProbabilityBox}
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}
     output::Symbol
     order::Int
     samples::DataFrame
@@ -32,7 +34,7 @@ end
 
 function GEMCS_RS_HDMR(
     anchor::Vector{Dict{Symbol, Vector{Float64}}}, 
-    inputs::Vector{<:ProbabilityBox}, 
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, 
     output::Symbol, 
     order::Int, 
     samples::DataFrame
@@ -42,7 +44,7 @@ end
 
 function (niss::NISS)(θ::Dict{Symbol, Vector{Float64}}; detailed::Bool=false)
     varnames = [pbox.name for pbox in niss.inputs]
-    total_params = sum(length(pbox.parameters) for pbox in niss.inputs)
+    total_params = sum(length(pbox.dist.parameters) for pbox in niss.inputs)
     sample_matrix = Matrix(niss.samples[:, varnames])
     y_values = niss.samples[:, niss.output]
     N = size(sample_matrix, 1)
@@ -70,13 +72,13 @@ end
 
 function lemcs_cut_hdmr(
     model::Model, 
-    inputs::Vector{<:ProbabilityBox},
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}},
     output::Symbol, 
     anchor::Dict{Symbol, Vector{Float64}}; 
     order::Int=2, 
     N::AbstractMonteCarlo = MonteCarlo(1000)
 )
-    anchor_inputs = [map_to_precise(anchor[pbox.name], pbox) for pbox in inputs]
+    anchor_inputs = [RandomVariable(map_to_precise(anchor[pbox.name], pbox.dist), pbox.name) for pbox in inputs]
 
     samples = sample(anchor_inputs, N)
     
@@ -90,7 +92,7 @@ end
 
 function gemcs_rs_hdmr(
     model::Model, 
-    inputs::Vector{<:ProbabilityBox},
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}},
     output::Symbol;
     order::Int=2, 
     N::Int=5000  # TODO maybe not pass as Int ? not sure but currently not consistant with lemcs_cut_hdmr()
@@ -98,7 +100,7 @@ function gemcs_rs_hdmr(
     anchor = _get_gemcs_anchorpoints(inputs, N)
 
     anchor_samples_list = map(anchor_point -> begin
-        anchor_inputs = [map_to_precise(anchor_point[pbox.name], pbox) for pbox in inputs]
+        anchor_inputs = [RandomVariable(map_to_precise(anchor_point[pbox.name], pbox.dist), pbox.name) for pbox in inputs]
         sample(anchor_inputs, 1)
     end, anchor)
     samples = vcat(anchor_samples_list...)
@@ -110,19 +112,19 @@ function gemcs_rs_hdmr(
     return GEMCS_RS_HDMR(anchor, inputs, output, order, samples, sensitivity_indices)
 end
 
-function _get_gemcs_anchorpoints(inputs::Vector{<:ProbabilityBox}, N::Int)
-    total_params = sum(length(pbox.parameters) for pbox in inputs)
-    param_bounds = [(param.lb, param.ub) for pbox in inputs for param in pbox.parameters]
+function _get_gemcs_anchorpoints(inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, N::Int)
+    total_params = sum(length(pbox.dist.parameters) for pbox in inputs)
+    param_bounds = [(lb, ub) for pbox in inputs for (lb, ub) in zip(bounds(pbox.dist)...)]
 
     lhs = [shuffle(collect(0:N-1)) for _ in 1:total_params]
     lhs_points = [(lhs[j][i] + 0.5) / N for i in 1:N, j in 1:total_params]
-
+    
     anchor = Vector{Dict{Symbol, Vector{Float64}}}(undef, N)
     for i in 1:N
         anchor_point = Dict{Symbol, Vector{Float64}}()
         idx = 1
         for pbox in inputs
-            nparams = length(pbox.parameters)
+            nparams = length(pbox.dist.parameters)
             vals = [param_bounds[idx+j-1][1] + lhs_points[i, idx+j-1] * (param_bounds[idx+j-1][2] - param_bounds[idx+j-1][1]) for j in 1:nparams]
             anchor_point[pbox.name] = vals
             idx += nparams
@@ -135,7 +137,7 @@ end
 function _compute_combination_component(
     sample_matrix::Matrix{Float64}, 
     y_values::Vector{Float64},
-    inputs::Vector{<:ProbabilityBox}, 
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, 
     combination_indices::Vector{Int}, 
     anchorpoint::Dict{Symbol, Vector{Float64}}, # local - single anchor point
     θ::Dict{Symbol, Vector{Float64}}
@@ -159,7 +161,7 @@ end
 function _compute_combination_component(
     sample_matrix::Matrix{Float64}, 
     y_values::Vector{Float64},
-    inputs::Vector{<:ProbabilityBox}, 
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, 
     combination_indices::Vector{Int}, 
     anchorpoint::Vector{Dict{Symbol, Vector{Float64}}}, # global - multiple anchor points
     θ::Dict{Symbol, Vector{Float64}}
@@ -183,7 +185,7 @@ function _compute_importance_ratio(
     combination_indices::Vector{Int}, 
     reference_point::Dict{Symbol, Vector{Float64}}, 
     θ::Dict{Symbol, Vector{Float64}}, 
-    inputs::Vector{<:ProbabilityBox},
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}},
     order::Int
 )
     rcut = Dict{Vector{Int}, Float64}()
@@ -210,11 +212,11 @@ function _compute_conditional_pdf_ratio(
     param_indices::Vector{Int}, 
     reference_point::Dict{Symbol, Vector{Float64}}, 
     θ::Dict{Symbol, Vector{Float64}}, 
-    inputs::Vector{<:ProbabilityBox}
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}
 )
     modified_params = deepcopy(reference_point)
     global_param_idx = 1
-    for pbox in inputs, local_param_idx in 1:length(pbox.parameters)
+    for pbox in inputs, local_param_idx in 1:length(pbox.dist.parameters)
         if global_param_idx in param_indices
             modified_params[pbox.name][local_param_idx] = θ[pbox.name][local_param_idx]
         end
@@ -230,17 +232,17 @@ end
 function _compute_joint_pdf(
     sample_point::Vector{Float64}, 
     parameter_values::Dict{Symbol, Vector{Float64}}, 
-    inputs::Vector{<:ProbabilityBox}
+    inputs::Vector{<:RandomVariable{<:ProbabilityBox}}
 )
     return reduce(*, map(i -> begin
         pbox = inputs[i]
-        precise_rv = map_to_precise(parameter_values[pbox.name], pbox)
-        pdf(precise_rv.dist, sample_point[i])
+        precise_rv = map_to_precise(parameter_values[pbox.name], pbox.dist)
+        pdf(precise_rv, sample_point[i])
     end, 1:length(inputs)))
 end
 
 function _compute_sensitivity_indices(niss::NISS)
-    total_params = sum(length(p.parameters) for p in niss.inputs)
+    total_params = sum(length(pbox.dist.parameters) for pbox in niss.inputs)
     varnames = [pbox.name for pbox in niss.inputs]
     sample_matrix = Matrix(niss.samples[:, varnames])
     y_values = niss.samples[:, niss.output]
@@ -261,17 +263,16 @@ function _compute_sensitivity_indices(niss::NISS)
 
     for order in 1:niss.order
         for indices in _combinations(1:total_params, order)
-            bounds = [param_bounds[i] for i in indices]
+            lowers = [param_bounds[i][1] for i in indices]
+            uppers = [param_bounds[i][2] for i in indices]
             function f(x)
                 θ_dict = _get_anchor_template(niss.anchor)
                 _set_parameters!(θ_dict, niss.inputs, collect(indices), x)
                 estimate, second_moment = get_component_function(collect(indices))(θ_dict)
                 return [estimate, estimate^2, second_moment, second_moment^2]
             end
-            lower = [b[1] for b in bounds]
-            upper = [b[2] for b in bounds]
-            (integral, err) = hcubature(f, lower, upper; rtol=order==1 ? 1e-3 : 1e-2, maxevals=order==1 ? 10000 : 20000)
-            volume = prod(b[2] - b[1] for b in bounds)
+            (integral, err) = hcubature(f, lowers, uppers; rtol=order==1 ? 1e-3 : 1e-2, maxevals=order==1 ? 10000 : 20000)
+            volume = prod(uppers[i] - lowers[i] for i in 1:length(lowers))
             mean, mean_sq, mean_second, mean_second_sq = integral ./ volume
             component_vars[collect(indices)] = mean_sq - mean^2
             component_vars_second_moment[collect(indices)] = mean_second_sq - mean_second^2
@@ -281,15 +282,16 @@ function _compute_sensitivity_indices(niss::NISS)
     return _assign_sensitivity_indices(component_vars, component_vars_second_moment, param_names)
 end
 
-function _get_param_bounds_and_names(inputs)
+function _get_param_bounds_and_names(inputs::Vector{<:RandomVariable{<:ProbabilityBox}})
     param_bounds = Dict{Int, Tuple{Float64, Float64}}()
     param_names = String[]
     count = 0
     for pbox in inputs
-        for param in pbox.parameters
+        lbs, ubs = bounds(pbox.dist)
+        for (i, param) in enumerate(pbox.dist.parameters)
             count += 1
-            param_bounds[count] = (param.lb, param.ub)
-            push!(param_names, "$(pbox.name)_$(param.name)")
+            param_bounds[count] = (lbs[i], ubs[i])
+            push!(param_names, "$(pbox.name)_$(param.first)")
         end
     end
     return param_bounds, param_names
@@ -303,10 +305,10 @@ function _get_anchor_template(anchor)
     end
 end
 
-function _set_parameters!(θ_dict::Dict{Symbol, Vector{Float64}}, inputs::Vector{<:ProbabilityBox}, indices::Vector{Int}, values::AbstractVector)
+function _set_parameters!(θ_dict::Dict{Symbol, Vector{Float64}}, inputs::Vector{<:RandomVariable{<:ProbabilityBox}}, indices::Vector{Int}, values::AbstractVector)
     param_idx = 0
     for pbox in inputs
-        for j in 1:length(pbox.parameters)
+        for j in 1:length(pbox.dist.parameters)
             param_idx += 1
             for (k, idx) in enumerate(indices)
                 if param_idx == idx
