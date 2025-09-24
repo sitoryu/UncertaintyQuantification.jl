@@ -21,7 +21,7 @@ function (hdmr::HDMRRepresentation)(h::Vector{Float64})
     return result
 end
 
-function cut_HDMR(model::Model, inputs::Vector{RandomVariable}, output::Symbol, anchor::DataFrame; order::Int=2, degree::Int=3, samples::Int=50)
+function cut_hdmr(model::Model, inputs::Vector{RandomVariable}, output::Symbol, anchor::DataFrame; order::Int=2, degree::Int=3, samples::Int=50)
     varnames = names(anchor)
     d = length(varnames)
     anchor_vec = [anchor[1, name] for name in varnames]
@@ -82,7 +82,8 @@ function cut_HDMR(model::Model, inputs::Vector{RandomVariable}, output::Symbol, 
                 
                 model_value = all_evaluation_points[eval_point]
                 
-                lower_contribution = _compute_lower_order_contribution(hdmr_coefficients, indices, point_values, f0, degree)
+                lower_contribution = _compute_lower_order_contribution(hdmr_coefficients, indices, f0, point_values, degree)
+                # lower_contribution = _compute_lower_order_contribution(hdmr_coefficients, indices, point_values, f0, degree)
                 y_values[k] = model_value - lower_contribution
             end
             

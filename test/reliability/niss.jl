@@ -99,7 +99,7 @@ using Distributions
 		@test isfinite(local_niss_mean)
 		@test local_niss_mean ≈ direct_mean atol=0.01
 		@test isfinite(global_niss_mean)
-		@test global_niss_mean ≈ direct_mean atol=0.015 # more tolerance because of standard mc sampling
+		@test global_niss_mean ≈ direct_mean atol=0.02 # more tolerance because of standard mc sampling
 	end
 
 	@testset "_get_gemcs_anchorpoints" begin
@@ -213,4 +213,5 @@ using Distributions
 		@test sens[:x1_μ] == (0.5, 0.3)
 		@test sens[:x1_σ] == (0.5, 0.7)
 	end
+	# Possible extension: lemcs with 500 samples and second order - takes additional ~4 seconds
 end

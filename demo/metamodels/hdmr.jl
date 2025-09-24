@@ -21,7 +21,7 @@ for test_order in [1, 2, 3]
     println("\n=== Testing Order $test_order ===")
     
     try
-        hdmr = cut_HDMR(model, inputs, :y, anchor; order=test_order, degree=3, samples=10)
+        hdmr = cut_hdmr(model, inputs, :y, anchor; order=test_order, degree=3, samples=10)
         
         test_points = [
             [0.2, 0.3, 0.4],

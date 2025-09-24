@@ -25,6 +25,7 @@ include("inputs/stochasticprocesses/models.jl")
 
 include("models/external/solvers.jl")
 include("models/external/externalmodel.jl")
+include("models/hdmr.jl")
 include("models/model.jl")
 include("models/polyharmonicspline.jl")
 include("models/pce/pcebases.jl")

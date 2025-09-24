@@ -82,7 +82,7 @@ export AbstractQuasiMonteCarlo
 export AbstractSimulation
 export Copula
 export DeterministicUQInput
-export NISS  # TODO not sure if needed
+# export NISS  # TODO not sure if needed
 export RandomUQInput
 export UQInput
 export UQModel
@@ -153,6 +153,7 @@ export TwoLevelFactorial
 export bayesianupdating
 export calc
 export count_rvs
+export cut_hdmr
 export dimensions
 export distribution_parameters
 export doe_samples
@@ -206,9 +207,9 @@ include("models//slicingmodel.jl")
 
 include("hpc/slurm.jl")
 
+include("models/hdmr.jl")
 include("models/pce/pcebases.jl")
 include("models/pce/polynomialchaosexpansion.jl")
-include("models/hdmr.jl")
 
 include("modelupdating/bayesianMAP.jl")
 include("modelupdating/bayesianupdating.jl")
