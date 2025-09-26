@@ -90,7 +90,7 @@ using Distributions
 		@test all(x -> x isa Dict, res2)
 
 		anchor_inputs = [RandomVariable(UncertaintyQuantification.map_to_precise(θ[pbox.name], pbox.dist), pbox.name) for pbox in inputs]
-		direct_samples = UncertaintyQuantification.sample(anchor_inputs, 10000)
+		direct_samples = UncertaintyQuantification.sample(anchor_inputs, LatinHypercubeSampling(10000))
 		evaluate!(model, direct_samples)
 		direct_mean = mean(direct_samples[:, :output])
 		local_niss_mean = sum(values(res[1]))
